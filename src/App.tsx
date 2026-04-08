@@ -68,6 +68,7 @@ const MOROCCAN_CITIES = [
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<Step>('intro');
   const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -76,24 +77,44 @@ export default function App() {
 
   const [isCityOpen, setIsCityOpen] = useState(false);
 
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
+      if (user) setIsGuest(false);
       setLoading(false);
     });
     return unsubscribe;
   }, []);
 
   const handleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
+    setError(null);
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
+      setIsGuest(false);
     } catch (err: any) {
-      setError(err.message);
+      // Don't show error if user just closed the popup or cancelled the request
+      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+        setError(err.message);
+      }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
-  const handleLogout = () => signOut(auth);
+  const handleContinueAsGuest = () => {
+    setIsGuest(true);
+    setError(null);
+  };
+
+  const handleLogout = () => {
+    signOut(auth);
+    setIsGuest(false);
+  };
 
   const updateFormData = (field: keyof FormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -107,14 +128,15 @@ export default function App() {
   };
 
   const handleSubmit = async () => {
-    if (!user) return;
+    if (!user && !isGuest) return;
     setIsSubmitting(true);
     setError(null);
 
     try {
       await addDoc(collection(db, 'responses'), {
         ...formData,
-        userId: user.uid,
+        userId: user ? user.uid : 'anonymous',
+        isGuest: !user,
         createdAt: serverTimestamp()
       });
       setCurrentStep('success');
@@ -172,12 +194,31 @@ export default function App() {
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
+          ) : isGuest ? (
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:block text-right">
+                <p className="text-sm font-bold text-slate-900">Mode Invité</p>
+                <p className="text-[10px] text-slate-500 font-medium">Non connecté</p>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="p-2.5 text-slate-400 hover:text-brand-500 hover:bg-brand-50 rounded-xl transition-all duration-300"
+                title="Quitter le mode invité"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
           ) : (
             <button 
               onClick={handleLogin}
-              className="flex items-center gap-2 px-5 py-2.5 bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition-all duration-300 text-sm font-bold shadow-lg shadow-brand-500/20"
+              disabled={isLoggingIn}
+              className="flex items-center gap-2 px-5 py-2.5 bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition-all duration-300 text-sm font-bold shadow-lg shadow-brand-500/20 disabled:opacity-50"
             >
-              <LogIn className="w-4 h-4" />
+              {isLoggingIn ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LogIn className="w-4 h-4" />
+              )}
               Connexion
             </button>
           )}
@@ -185,7 +226,7 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-12 pb-32">
-        {!user ? (
+        {!user && !isGuest ? (
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -216,15 +257,28 @@ export default function App() {
             </motion.div>
             <h2 className="text-4xl font-display font-bold text-slate-900 mb-4 tracking-tight">Bienvenue sur le Questionnaire Terrain</h2>
             <p className="text-slate-600 mb-10 max-w-md mx-auto leading-relaxed text-lg">
-              Veuillez vous connecter pour commencer l'étude des défis des pharmacies au Maroc.
+              Veuillez vous connecter ou continuer en tant qu'invité pour commencer l'étude.
             </p>
-            <button 
-              onClick={handleLogin}
-              className="inline-flex items-center gap-3 px-12 py-5 bg-brand-500 text-white rounded-2xl hover:bg-brand-600 transition-all duration-300 font-bold shadow-2xl shadow-brand-500/40 hover:scale-[1.02] active:scale-[0.98] text-lg"
-            >
-              <LogIn className="w-6 h-6" />
-              Se connecter avec Google
-            </button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <button 
+                onClick={handleLogin}
+                disabled={isLoggingIn}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-10 py-5 bg-brand-500 text-white rounded-2xl hover:bg-brand-600 transition-all duration-300 font-bold shadow-2xl shadow-brand-500/40 hover:scale-[1.02] active:scale-[0.98] text-lg disabled:opacity-50 disabled:scale-100"
+              >
+                {isLoggingIn ? (
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                ) : (
+                  <LogIn className="w-6 h-6" />
+                )}
+                {isLoggingIn ? 'Connexion...' : 'Se connecter avec Google'}
+              </button>
+              <button 
+                onClick={handleContinueAsGuest}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-10 py-5 bg-white text-slate-600 border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all duration-300 font-bold shadow-xl shadow-slate-200/20 hover:scale-[1.02] active:scale-[0.98] text-lg"
+              >
+                Continuer sans connexion
+              </button>
+            </div>
           </motion.div>
         ) : (
           <div className="space-y-8">

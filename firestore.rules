@@ -42,7 +42,7 @@ service cloud.firestore {
       return data.keys().hasAll(['pharmacyName', 'answers', 'createdAt', 'userId']) &&
              data.pharmacyName is string && data.pharmacyName.size() > 0 && data.pharmacyName.size() < 200 &&
              data.answers is map &&
-             data.userId == request.auth.uid &&
+             (isAuthenticated() ? data.userId == request.auth.uid : data.userId == 'anonymous') &&
              data.createdAt is timestamp;
     }
 
@@ -60,8 +60,8 @@ service cloud.firestore {
       // Users can only read their own responses, admins can read all
       allow read: if isDocOwner() || isAdmin();
       
-      // Any authenticated user can create a response
-      allow create: if isAuthenticated() && isValidResponse(request.resource.data);
+      // Any user (authenticated or guest) can create a response if it's valid
+      allow create: if isValidResponse(request.resource.data);
       
       // Only admins can update or delete responses for now
       allow update, delete: if isAdmin();
