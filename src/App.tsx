@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import * as React from 'react';
 import { 
   auth, 
   db,
@@ -11,6 +11,7 @@ import {
   User
 } from 'firebase/auth';
 import { logEvent } from 'firebase/analytics';
+import posthog from 'posthog-js';
 import { 
   collection, 
   addDoc, 
@@ -64,8 +65,17 @@ interface FirestoreErrorInfo {
   }
 }
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, errorInfo: string | null }> {
-  constructor(props: { children: React.ReactNode }) {
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorInfo: string | null;
+}
+
+class ErrorBoundary extends (React.Component as any) {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, errorInfo: null };
   }
@@ -140,14 +150,14 @@ const MOROCCAN_CITIES = [
 // --- Components ---
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [currentStep, setCurrentStep] = useState<Step>('intro');
-  const [formData, setFormData] = useState<FormData>(initialFormData);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = React.useState<User | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [currentStep, setCurrentStep] = React.useState<Step>('intro');
+  const [formData, setFormData] = React.useState<FormData>(initialFormData);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const [isCityOpen, setIsCityOpen] = useState(false);
+  const [isCityOpen, setIsCityOpen] = React.useState(false);
 
   const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
     const errInfo: FirestoreErrorInfo = {
@@ -172,7 +182,7 @@ export default function App() {
     throw new Error(JSON.stringify(errInfo));
   }
 
-  useEffect(() => {
+  React.useEffect(() => {
     const testConnection = async () => {
       try {
         await getDocFromServer(doc(db, 'test', 'connection'));
@@ -185,7 +195,7 @@ export default function App() {
     testConnection();
   }, []);
 
-  useEffect(() => {
+  React.useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         try {
@@ -201,6 +211,12 @@ export default function App() {
         }
       } else {
         setUser(currentUser);
+        if (currentUser.uid) {
+          posthog.identify(currentUser.uid, {
+            email: currentUser.email,
+            isAnonymous: currentUser.isAnonymous
+          });
+        }
         setLoading(false);
       }
     });
@@ -238,6 +254,12 @@ export default function App() {
           pharmacy: formData.pharmacyName
         });
       }
+
+      posthog.capture('questionnaire_completed', {
+        city: formData.city,
+        pharmacy: formData.pharmacyName,
+        respondentRole: formData.respondentRole
+      });
 
       setCurrentStep('success');
     } catch (err: any) {
@@ -487,6 +509,7 @@ export default function App() {
                   if (analytics) {
                     logEvent(analytics, 'questionnaire_started');
                   }
+                  posthog.capture('questionnaire_started');
                   handleNext();
                 }}
                 className="w-full sm:w-auto px-10 sm:px-20 py-4 sm:py-6 bg-brand-500 text-white rounded-xl sm:rounded-2xl font-bold hover:bg-brand-600 transition-all duration-300 shadow-2xl shadow-brand-500/40 hover:scale-[1.02] active:scale-[0.98] text-base sm:text-lg"
