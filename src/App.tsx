@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   auth, 
-  db 
+  db,
+  analytics 
 } from './firebase';
 import { 
   onAuthStateChanged, 
@@ -9,6 +10,7 @@ import {
   signOut,
   User
 } from 'firebase/auth';
+import { logEvent } from 'firebase/analytics';
 import { 
   collection, 
   addDoc, 
@@ -229,6 +231,14 @@ export default function App() {
         isAnonymous: user.isAnonymous,
         createdAt: serverTimestamp()
       });
+      
+      if (analytics) {
+        logEvent(analytics, 'questionnaire_completed', {
+          city: formData.city,
+          pharmacy: formData.pharmacyName
+        });
+      }
+
       setCurrentStep('success');
     } catch (err: any) {
       console.error("Error submitting questionnaire:", err);
@@ -473,7 +483,12 @@ export default function App() {
                 </div>
               </div>
               <button 
-                onClick={handleNext}
+                onClick={() => {
+                  if (analytics) {
+                    logEvent(analytics, 'questionnaire_started');
+                  }
+                  handleNext();
+                }}
                 className="w-full sm:w-auto px-10 sm:px-20 py-4 sm:py-6 bg-brand-500 text-white rounded-xl sm:rounded-2xl font-bold hover:bg-brand-600 transition-all duration-300 shadow-2xl shadow-brand-500/40 hover:scale-[1.02] active:scale-[0.98] text-base sm:text-lg"
               >
                 Commencer le questionnaire
