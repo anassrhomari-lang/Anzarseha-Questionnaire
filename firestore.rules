@@ -1,0 +1,76 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: responses
+// Document ID: auto-generated
+// Fields:
+//   - pharmacyName: string (required)
+//   - neighborhood: string (optional)
+//   - respondentRole: string (optional)
+//   - date: string (optional, ISO 8601)
+//   - phone: string (optional)
+//   - experience: string (optional)
+//   - agentNote: number (optional, 1-5)
+//   - answers: map (required)
+//   - createdAt: timestamp (required)
+//   - userId: string (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function isValidResponse(data) {
+      return data.keys().hasAll(['pharmacyName', 'answers', 'createdAt', 'userId']) &&
+             data.pharmacyName is string && data.pharmacyName.size() > 0 && data.pharmacyName.size() < 200 &&
+             data.answers is map &&
+             data.userId == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "anass.rhomari@usmba.ac.ma" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /responses/{responseId} {
+      // Users can only read their own responses, admins can read all
+      allow read: if isDocOwner() || isAdmin();
+      
+      // Any authenticated user can create a response
+      allow create: if isAuthenticated() && isValidResponse(request.resource.data);
+      
+      // Only admins can update or delete responses for now
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && request.resource.data.role == 'user';
+      allow delete: if isAdmin();
+    }
+  }
+}

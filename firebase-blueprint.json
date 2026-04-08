@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "Response": {
+      "title": "Questionnaire Response",
+      "description": "A single response to the pharmacy questionnaire.",
+      "type": "object",
+      "properties": {
+        "pharmacyName": { "type": "string", "description": "Nom de la pharmacie" },
+        "neighborhood": { "type": "string", "description": "Quartier / Zone" },
+        "respondentRole": { "type": "string", "description": "Répondant (rôle)" },
+        "date": { "type": "string", "format": "date", "description": "Date de réponse" },
+        "phone": { "type": "string", "description": "Téléphone / WhatsApp" },
+        "experience": { "type": "string", "description": "Ancienneté dans le secteur" },
+        "agentNote": { "type": "number", "description": "Note initiale de l'agent" },
+        "answers": { "type": "object", "description": "Answers to the questionnaire sections" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" },
+        "userId": { "type": "string", "description": "UID of the user who submitted" }
+      },
+      "required": ["pharmacyName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/responses/{responseId}": {
+      "schema": "Response",
+      "description": "Collection of questionnaire responses"
+    }
+  }
+}
