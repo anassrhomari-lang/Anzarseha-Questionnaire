@@ -5,15 +5,16 @@ import {
 } from './firebase';
 import { 
   onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  signInAnonymously,
   signOut,
   User
 } from 'firebase/auth';
 import { 
   collection, 
   addDoc, 
-  serverTimestamp 
+  serverTimestamp,
+  getDocFromServer,
+  doc
 } from 'firebase/firestore';
 import { 
   LayoutDashboard, 
@@ -25,7 +26,6 @@ import {
   ChevronRight, 
   ChevronLeft, 
   LogOut, 
-  LogIn,
   Loader2,
   AlertCircle
 } from 'lucide-react';
@@ -33,6 +33,77 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
 // --- Types ---
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, errorInfo: string | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, errorInfo: error.message };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+          <div className="glass rounded-2xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-4">Oups ! Une erreur est survenue</h2>
+            <p className="text-slate-600 mb-6 text-sm">
+              L'application a rencontré un problème inattendu. Veuillez rafraîchir la page.
+            </p>
+            {this.state.errorInfo && (
+              <div className="bg-slate-100 p-4 rounded-xl mb-6 text-left overflow-hidden">
+                <p className="text-[10px] font-mono text-slate-500 break-all leading-relaxed">
+                  {this.state.errorInfo}
+                </p>
+              </div>
+            )}
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-brand-500 text-white rounded-xl font-bold hover:bg-brand-600 transition-all"
+            >
+              Rafraîchir la page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Step = 'intro' | 'identification' | 'section-a' | 'section-b' | 'section-c' | 'section-d' | 'section-e' | 'success';
 
@@ -68,7 +139,6 @@ const MOROCCAN_CITIES = [
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [isGuest, setIsGuest] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<Step>('intro');
   const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -77,44 +147,63 @@ export default function App() {
 
   const [isCityOpen, setIsCityOpen] = useState(false);
 
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    const errInfo: FirestoreErrorInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+        tenantId: auth.currentUser?.tenantId,
+        providerInfo: auth.currentUser?.providerData.map(provider => ({
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          email: provider.email,
+          photoUrl: provider.photoURL
+        })) || []
+      },
+      operationType,
+      path
+    }
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    throw new Error(JSON.stringify(errInfo));
+  }
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      if (user) setIsGuest(false);
-      setLoading(false);
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
+    }
+    testConnection();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (!currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (err: any) {
+          console.error("Anonymous auth failed:", err);
+          if (err.code === 'auth/admin-restricted-operation') {
+            setError("L'authentification anonyme n'est pas activée dans la console Firebase. Veuillez l'activer pour permettre l'accès sans connexion.");
+          } else {
+            setError("Erreur d'authentification. Veuillez rafraîchir la page.");
+          }
+          setLoading(false);
+        }
+      } else {
+        setUser(currentUser);
+        setLoading(false);
+      }
     });
     return unsubscribe;
   }, []);
-
-  const handleLogin = async () => {
-    if (isLoggingIn) return;
-    setIsLoggingIn(true);
-    setError(null);
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      setIsGuest(false);
-    } catch (err: any) {
-      // Don't show error if user just closed the popup or cancelled the request
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-        setError(err.message);
-      }
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleContinueAsGuest = () => {
-    setIsGuest(true);
-    setError(null);
-  };
-
-  const handleLogout = () => {
-    signOut(auth);
-    setIsGuest(false);
-  };
 
   const updateFormData = (field: keyof FormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -128,21 +217,22 @@ export default function App() {
   };
 
   const handleSubmit = async () => {
-    if (!user && !isGuest) return;
+    if (!user) return;
     setIsSubmitting(true);
     setError(null);
 
+    const path = 'responses';
     try {
-      await addDoc(collection(db, 'responses'), {
+      await addDoc(collection(db, path), {
         ...formData,
-        userId: user ? user.uid : 'anonymous',
-        isGuest: !user,
+        userId: user.uid,
+        isAnonymous: user.isAnonymous,
         createdAt: serverTimestamp()
       });
       setCurrentStep('success');
     } catch (err: any) {
       console.error("Error submitting questionnaire:", err);
-      setError("Une erreur est survenue lors de l'envoi. Veuillez réessayer.");
+      handleFirestoreError(err, OperationType.WRITE, path);
     } finally {
       setIsSubmitting(false);
     }
@@ -157,7 +247,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900">
+    <ErrorBoundary>
+      <div className="min-h-screen text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900">
       {/* Header */}
       <header className="glass sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
@@ -180,109 +271,27 @@ export default function App() {
             </div>
           </div>
 
-          {user ? (
+          {user && !user.isAnonymous && (
             <div className="flex items-center gap-4">
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-bold text-slate-900">{user.displayName}</p>
                 <p className="text-[10px] text-slate-500 font-medium">{user.email}</p>
               </div>
               <button 
-                onClick={handleLogout}
+                onClick={() => signOut(auth)}
                 className="p-2.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all duration-300"
                 title="Déconnexion"
               >
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
-          ) : isGuest ? (
-            <div className="flex items-center gap-4">
-              <div className="hidden sm:block text-right">
-                <p className="text-sm font-bold text-slate-900">Mode Invité</p>
-                <p className="text-[10px] text-slate-500 font-medium">Non connecté</p>
-              </div>
-              <button 
-                onClick={handleLogout}
-                className="p-2.5 text-slate-400 hover:text-brand-500 hover:bg-brand-50 rounded-xl transition-all duration-300"
-                title="Quitter le mode invité"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={handleLogin}
-              disabled={isLoggingIn}
-              className="flex items-center gap-2 px-5 py-2.5 bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition-all duration-300 text-sm font-bold shadow-lg shadow-brand-500/20 disabled:opacity-50"
-            >
-              {isLoggingIn ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <LogIn className="w-4 h-4" />
-              )}
-              Connexion
-            </button>
           )}
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-12 pb-32">
-        {!user && !isGuest ? (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="glass rounded-2xl sm:rounded-3xl p-6 sm:p-12 text-center"
-          >
-            <motion.div 
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl sm:rounded-[2rem] overflow-hidden mx-auto mb-6 sm:mb-8 shadow-2xl shadow-brand-500/20 border-4 border-white"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ 
-                opacity: 1, 
-                y: [0, -10, 0],
-              }}
-              transition={{
-                opacity: { duration: 0.5 },
-                y: { 
-                  duration: 4, 
-                  repeat: Infinity, 
-                  ease: "easeInOut" 
-                }
-              }}
-            >
-              <img 
-                src="https://framerusercontent.com/images/YPAzIjoMNrFadoMFFkX13J0nXrs.png?scale-down-to=512&width=3432&height=3432" 
-                alt="Anzarseha Logo" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            </motion.div>
-            <h2 className="text-2xl sm:text-4xl font-display font-bold text-slate-900 mb-3 sm:mb-4 tracking-tight">Bienvenue sur le Questionnaire Terrain</h2>
-            <p className="text-slate-600 mb-8 sm:mb-10 max-w-md mx-auto leading-relaxed text-base sm:text-lg">
-              Veuillez vous connecter ou continuer en tant qu'invité pour commencer l'étude.
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
-              <button 
-                onClick={handleLogin}
-                disabled={isLoggingIn}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 sm:gap-3 px-8 sm:px-10 py-4 sm:py-5 bg-brand-500 text-white rounded-xl sm:rounded-2xl hover:bg-brand-600 transition-all duration-300 font-bold shadow-2xl shadow-brand-500/40 hover:scale-[1.02] active:scale-[0.98] text-base sm:text-lg disabled:opacity-50 disabled:scale-100"
-              >
-                {isLoggingIn ? (
-                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
-                ) : (
-                  <LogIn className="w-5 h-5 sm:w-6 sm:h-6" />
-                )}
-                {isLoggingIn ? 'Connexion...' : 'Se connecter avec Google'}
-              </button>
-              <button 
-                onClick={handleContinueAsGuest}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 sm:gap-3 px-8 sm:px-10 py-4 sm:py-5 bg-white text-slate-600 border border-slate-200 rounded-xl sm:rounded-2xl hover:bg-slate-50 transition-all duration-300 font-bold shadow-xl shadow-slate-200/20 hover:scale-[1.02] active:scale-[0.98] text-base sm:text-lg"
-              >
-                Continuer sans connexion
-              </button>
-            </div>
-          </motion.div>
-        ) : (
-          <div className="space-y-6 sm:space-y-8">
-            {/* Progress Bar */}
+        <div className="space-y-6 sm:space-y-8">
+          {/* Progress Bar */}
             {currentStep !== 'intro' && currentStep !== 'success' && (
               <div className="glass rounded-xl sm:rounded-2xl p-4 sm:p-5">
                 <div className="flex justify-between items-center mb-2 sm:mb-3">
@@ -372,9 +381,9 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
       </main>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 
   function getStepIndex(step: Step): number {

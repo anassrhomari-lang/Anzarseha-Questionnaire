@@ -15,6 +15,7 @@
 //   - answers: map (required)
 //   - createdAt: timestamp (required)
 //   - userId: string (required)
+//   - isAnonymous: bool (optional)
 //
 // ===============================================================
 
@@ -39,16 +40,23 @@ service cloud.firestore {
     }
 
     function isValidResponse(data) {
-      return data.keys().hasAll(['pharmacyName', 'answers', 'createdAt', 'userId']) &&
+      let requiredFields = ['pharmacyName', 'answers', 'createdAt', 'userId'];
+      return data.keys().hasAll(requiredFields) &&
              data.pharmacyName is string && data.pharmacyName.size() > 0 && data.pharmacyName.size() < 200 &&
+             data.city is string && data.city.size() < 100 &&
+             data.respondentRole is string && data.respondentRole.size() < 100 &&
+             data.phone is string && data.phone.size() < 50 &&
+             data.experience is string && data.experience.size() < 100 &&
              data.answers is map &&
-             (isAuthenticated() ? data.userId == request.auth.uid : data.userId == 'anonymous') &&
-             data.createdAt is timestamp;
+             data.userId == request.auth.uid &&
+             data.createdAt is timestamp &&
+             (!('isAnonymous' in data) || data.isAnonymous is bool);
     }
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
           (request.auth.token.email == "anass.rhomari@usmba.ac.ma" && request.auth.token.email_verified == true));
     }
 
